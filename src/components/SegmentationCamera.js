@@ -1,4 +1,4 @@
-import React, {useEffect, useState} from 'react';
+import React, {useEffect, useState, useCallback} from 'react';
 import {View, Text, StyleSheet} from 'react-native';
 import {
   Camera,
@@ -32,7 +32,10 @@ export default function SegmentationCamera() {
           require('../assets/2.tflite'),
         );
         setModel(loadedModel);
+
         console.log('Model loaded successfully');
+        console.log('Model Inputs:', loadedModel.inputs);
+        console.log('Model Outputs:', loadedModel.outputs);
       } catch (e) {
         console.error('Failed to load model', e);
       }
@@ -40,34 +43,44 @@ export default function SegmentationCamera() {
   }, []);
 
   // JS function to run model
-  const runModel = async inputTensor => {
-    if (!model) return;
-    try {
-      const output = await model.run(inputTensor);
-      console.log('Model output:', output);
-    } catch (e) {
-      console.error(e);
-    }
-  };
+  const runModel = useCallback(
+    async inputTensor => {
+      if (!model) return;
+      try {
+        // Allocate a fresh buffer
+        const floatData = new Float32Array(inputTensor.data.length);
+        for (let i = 0; i < inputTensor.data.length; i++) {
+          floatData[i] = inputTensor.data[i];
+        }
 
-  // Wrap the JS function using the new API
+        const tensor = {data: floatData, shape: inputTensor.shape};
+        const output = await model.run([tensor]);
+
+        console.log('✅ Model output:', output);
+      } catch (e) {
+        console.error('❌ runModel error:', e);
+      }
+    },
+    [model],
+  );
+  // Wrap the JS function
   const runModelJS = Worklets.createRunOnJS(runModel);
 
+  // Frame processor
   // Frame processor
   const frameProcessor = useFrameProcessor(
     frame => {
       'worklet';
 
-      // Dummy preprocessing inside worklet
-      const size = 257 * 257 * 3;
-      const inputTensor = new Float32Array(size).fill(0.5);
+      // Just use plain JS array, no Float32Array here
+      const size = 1 * 257 * 257 * 3;
+      const data = new Array(size).fill(0.5);
 
-      // Call JS function safely from worklet
-      runModelJS(inputTensor);
+      // Send only serializable data
+      runModelJS({data, shape: [1, 257, 257, 3]});
     },
     [model],
   );
-
   if (!permission) return <Text>No camera permission</Text>;
   if (!device) return <Text>Loading camera...</Text>;
 
@@ -78,7 +91,7 @@ export default function SegmentationCamera() {
         device={device}
         isActive
         frameProcessor={frameProcessor}
-        frameProcessorFps={5}
+        frameProcessorFps={10}
       />
       <Text style={styles.text}>Model ready!</Text>
     </View>
